@@ -27,27 +27,25 @@ class DAT_restraint(object):
         self.index3 = None
         self.index4 = None
 
-        self.attach =  {'target':            None,
-                        'force_initial':     None,
-                        'force_final':       None,
-                        'force_increment':   None
-                       }
-        self.pull =    {'target_initial':    None,
+        self.attach =  {'target_initial':    None, # Percent of force constant
                         'target_final':      None,
                         'target_increment':  None,
-                        'force_initial':     None,
-                        'force_final':       None,
-                        'force_increment':   None
+                        'force_constant':    None,
+                        'targets':           None, # List to hold actual target values
+                        'forces':            None  # List to hold actual force values
+                       }
+        self.pull =    {'target_initial':    None, # Distance for restraint
+                        'target_final':      None,
+                        'target_increment':  None,
+                        'force_constant' :   None,
+                        'targets':           None,  # List to hold actual target values
+                        'forces':            None   # List to hold actual force values
                        }
         self.release = {'target':            None,
                         'force_initial':     None,
                         'force_final':       None,
                         'force_increment':   None
                        }
-
-        self.attach_forces, self.attach_targets  = [], []
-        self.pull_forces, self.pull_targets    = [], []
-        self.release_forces, self.release_targets = [], []
 
     def index_from_mask(self, mask):
         """
@@ -66,27 +64,55 @@ class DAT_restraint(object):
         If the user hasn't already declared the windows list, we will
         construct one from the initial, final, and increment values.
         """
-        if not self.attach_forces and self.attach['force_final']:
-            self.attach_forces = np.arange(self.attach['force_initial'],
-                                           self.attach['force_final'],
-                                           self.attach['force_increment'])
+        if not self.attach['targets']:
+            log.debug('Building attach targets from fractions...')
+            self.attach['targets'] = np.arange(self.attach['target_initial'],
+                                               self.attach['target_final'] +
+                                               self.attach['target_increment'],
+                                               self.attach['target_increment'])
+        if not self.attach['forces']:
+            log.debug('Building attach force targets from fractions...')
+            self.attach['forces'] = [self.attach['force_constant'] * i
+                                     for i in self.attach['targets']]
+
+        if not self.pull['targets']:
+            log.debug('Building pull targets from fractions...')
+            self.pull['targets'] = np.arange(self.pull['target_initial'],
+                                             self.pull['target_final'] +
+                                             self.pull['target_increment'],
+                                             self.pull['target_increment'])
+        if not self.pull['forces']:
+            log.debug('Building pull force targets from fractions...')
+            self.pull['forces'] = [self.pull['force_constant'] * i
+                                     for i in self.pull['targets']]
+
+
+
+        if not self.attach_targets and self.attach['force']:
+            log.debug('Building attach force targets from a range...')
             # Make a list of targets as long as the attachment windows.
-            self.attach_targets = [self.attach['target']] * len(self.attach_forces)
+            # I'm not sure the following line is working...
+            log.warn('Investigate!')
+            # self.attach_targets = [self.attach['target']] * len(self.attach_forces)
+
         if not self.pull_forces and self.pull['force_final']:
             # In the pulling phase, the target distance also changes.
             self.pull_targets = np.arange(self.pull['target_initial'],
-                                          self.pull['target_final'],
+                                          self.pull['target_final'] +
+                                          self.pull['target_increment'],
                                           self.pull['target_increment'])
 
             if self.pull['force_initial'] != self.pull['force_final']:
                 self.pull_forces = np.arange(self.pull['force_initial'],
-                                             self.pull['force_final'],
+                                             self.pull['force_final'] +
+                                             self.pull['force_increment'],
                                              self.pull['force_increment'])
             else:
                 self.pull_forces = [self.pull['force_initial']] * len(self.pull_targets)
         if not self.release_forces and self.release['force_final']:
             self.release_forces = np.arange(self.release['force_initial'],
-                                            self.release['force_final'],
+                                            self.release['force_final'] +
+                                            self.release['force_increment'],
                                             self.release['force_increment'])
             # Make a list of targets as long as the release windows.
             self.release_targets = [self.release['target']] * len(self.release_forces)
@@ -112,8 +138,6 @@ class DAT_restraint(object):
             self.index4 = self.index_from_mask(self.mask4)
         else:
             self.index4 = None
-        log.warn('I think we need to make sure the number of targets and \
-        forces are the same!')
 
 
 def return_restraint_line(restraint, phase, window, group=False):
@@ -198,16 +222,16 @@ def return_restraint_line(restraint, phase, window, group=False):
     if group4:
         string += 'igr4 = {}'.format(igr4)
     string += \
-            '\tr1  = {0:4.4f}'.format(0) + \
-            '\tr2  = {0:4.4f}'.format(restraint.phase[phase]['targets'][window]) + \
-            '\tr3  = {0:4.4f}'.format(restraint.phase[phase]['targets'][window]) + \
-            '\tr4  = {0:4.4f}'.format(999) + \
-            '\trk2 = {0:4.4f}'.format(restraint.phase[phase]['forces'][window]) + \
-            '\trk3 = {0:4.4f}'.format(restraint.phase[phase]['forces'][window]) + \
+            '\tr1  = {0:4.4f},'.format(0) + \
+            '\tr2  = {0:4.4f},'.format(restraint.phase[phase]['targets'][window]) + \
+            '\tr3  = {0:4.4f},'.format(restraint.phase[phase]['targets'][window]) + \
+            '\tr4  = {0:4.4f},'.format(999) + \
+            '\trk2 = {0:4.4f},'.format(restraint.phase[phase]['forces'][window]) + \
+            '\trk3 = {0:4.4f},'.format(restraint.phase[phase]['forces'][window]) + \
             '\t&end'
     return string
 
-def make_directories():
+def make_directories(restraint):
     """
     Make a series of directories to hold the simulation setup files
     and the data. This function should probably end up in a separate
@@ -218,53 +242,48 @@ def make_directories():
     # If exist_ok is False (the default), an OSError is raised if the target directory already
     # exists.
 
-    for window in attach_windows:
-        os.mkdirs('./windows/a{}', exist_ok=True)
-    for window in pull_windows:
-        os.mkdirs('./windows/p{}')
+    log.debug('We ought to make sure somewhere that all restraints have'
+              ' the same number of windows. Here I am creating directories based '
+              ' on the number of windows in a single restraint.')
+    for window, _ in enumerate(restraint.attach_forces):
+        os.makedirs('./windows/a{0:03d}'.format(window), exist_ok=True)
+    for window, _ in enumerate(restraint.pull_forces):
+        os.makedirs('./windows/p{0:03d}'.format(window), exist_ok=True)
 
 def write_restraints_file(restraints, filename='restraints.in'):
     """
     Take all the restraints and write them to a file in each window.
     """
-    for window in attach_windows:
-        for restraint in restraints:
-            ...
-    for window in pull_windows:
-        for restraint in restraints:
-            ...
+    for restraint in restraints:
+        for window, _ in enumerate(restraint.attach_forces):
+            line = return_restraint_line(restraint, phase='attach', window=window)
+            # Using append mode is crucial for multiple restraints.
+            directory = './windows/a{0:03d}'.format(window)
+            f = open(directory + '/' + filename, 'a')
+            f.write(line + '\n')
+            f.close()
 
+    for restraint in restraints:
+        for window, _ in enumerate(restraint.pull_forces):
+            line = return_restraint_line(restraint, phase='pull', window=window)
+            # Using append mode is crucial for multiple restraints.
+            directory = './windows/p{0:03d}'.format(window)
+            f = open(directory + '/' + filename, 'a')
+            f.write(line + '\n')
+            f.close()
 
-# Initialize a distance restraint that acts on :BUTC3 and :CB6@C10...
-first = DAT_restraint()
-first.structure_file = '../test/cb6-but/cb6-but.pdb'
-first.mask1 = ':BUT@C3'
-first.mask2 = ':CB6@C10'
-first.pull = {'target_initial'   : 0,  # angstroms (by definition, I guess)
-             'target_final'     : 10, # angstroms
-             'target_increment' : 1,  # angstroms
-             'force_initial'    : 5,  # kcal per mol
-             'force_final'      : 5,  # kcal per mol
-             'force_increment'  : 1   # kcal per mol (but shouldn't matter)
-            }
-first.initialize()
+def clean_restraints_file(restraints, filename='restraints.in'):
+    """
+    Delete the restraints files for repeated testing.
+    """
+    for restraint in restraints:
+        for window, _ in enumerate(restraint.attach_forces):
 
-# Initialize a distance restraint that acts on :BUT and :CB6...
-second = DAT_restraint()
-second.structure_file = '../test/cb6-but/cb6-but.pdb'
-second.mask1 = ':BUT'
-second.mask2 = ':CB6'
-second.pull = {'target_initial'   : 4,  # angstroms (by definition, I guess)
-             'target_final'     : 12, # angstroms
-             'target_increment' : 1,  # angstroms
-             'force_initial'    : 7,  # kcal per mol
-             'force_final'      : 23,  # kcal per mol
-             'force_increment'  : 1   # kcal per mol (but shouldn't matter)
-            }
-second.initialize()
+            directory = './windows/a{0:03d}'.format(window)
+            os.remove(directory + '/' + filename)
 
-# Is there a more clever way to keep track of *all* restraints?
-restraints = [first, second]
-# Is there a more clever way of determining all windows?
-# (And enforcing all restraints have the right number of windows?)
-write_restraints_file(restraints)
+    for restraint in restraints:
+        for window, _ in enumerate(restraint.pull_forces):
+
+            directory = './windows/p{0:03d}'.format(window)
+            os.remove(directory + '/' + filename)
